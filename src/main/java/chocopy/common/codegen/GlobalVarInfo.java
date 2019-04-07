@@ -11,10 +11,11 @@ public class GlobalVarInfo extends VarInfo {
     protected final Label label;
 
     /**
-     * A descriptor for a global variable named VARNAME whose initial value
-     * is labeled with INITIALVALUE (null if no initializtion value).
-     */
-    public GlobalVarInfo(String varName, ValueType varType, Literal initialValue) {
+     * A descriptor for a global variable named VARNAME of type VARTYPE
+     * whose initial value is labeled with INITIALVALUE (null if
+     * no initializtion value). */
+    public GlobalVarInfo(String varName, ValueType varType,
+                         Literal initialValue) {
         super(varName, varType, initialValue);
         this.label = new Label(String.format("$%s", varName));
     }

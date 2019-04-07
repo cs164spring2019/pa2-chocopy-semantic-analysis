@@ -10,13 +10,11 @@ import chocopy.common.astnodes.NoneLiteral;
 import chocopy.common.astnodes.StringLiteral;
 
 /**
- * A store for caching and re-using program constants that are represented as immutable
- * objects.
+ * A store for caching and re-using program constants that are represented
+ * as immutable objects.
  *
  * Constants are emitted in assembly in the DATA section,
  * and therefore are represented by their labels.
- *
- * @see {@link Label}
  */
 public class Constants {
 

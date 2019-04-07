@@ -72,14 +72,15 @@ public class FuncInfo extends SymbolInfo {
 
     /**
      * Creates a descriptor for a function or method with fully qualified name
-     * FUNCNAME that is at nesting depth DEPTH.  The code label is formed
-     * from FUNCNAME by prepending a $ sign to prevent collisions.
+     * FUNCNAME returning type RETURNTYPE that is at nesting depth DEPTH.
+     * The code label is formed from FUNCNAME by prepending a $ sign to
+     * prevent collisions.
      * PARENTSYMBOLTABLE is the symbol table of the containing region.
      * PARENTFUNCINFO is the descriptor of the enclosing function
-     * (null for global functions and methods). EMITTER encapsulates a
-     * method that emits the function's body (this is usually a generic
-     * emitter for user-defined functions/methods, and a special emitter
-     * for pre-defined functions/methods). */
+     * (null for global functions and methods).
+     * EMITTER encapsulates a method that emits the function's body (this is
+     * usually a generic emitter for user-defined functions/methods,
+     * and a special emitter for pre-defined functions/methods). */
     public FuncInfo(String funcName, int depth, SymbolType returnType,
                     SymbolTable<SymbolInfo> parentSymbolTable,
                     FuncInfo parentFuncInfo, Consumer<FuncInfo> emitter) {
@@ -113,13 +114,14 @@ public class FuncInfo extends SymbolInfo {
      * Returns the index of parameter or local variable NAME in the function's
      * activation record.
      *
-     * The convention is that for a function with `N` params
-     * and `K` local vars, the `i`th param is at index `i`
-     * and the `j`th local var is at index `N+j`. In all,
-     * a function stores `N+K` variables contiguously in
-     * its activation record.
+     * The convention is that for a function with N params
+     * and K local vars, the i`th param is at index `i`
+     * and the j`th local var is at index `N+j+2`. In all,
+     * a function stores N+K+2 variables contiguously in
+     * its activation record, where the N+1st is the frame pointer
+     * and the N+2nd is the return address.
      *
-     * Note: this is an index (starting at 0), and not an offset in
+     * Caution: this is an index (starting at 0), and not an offset in
      * number of bytes.
      */
     public int getVarIndex(String name) {
@@ -129,7 +131,7 @@ public class FuncInfo extends SymbolInfo {
         }
         for (int i = 0; i < locals.size(); i++) {
             if (locals.get(i).getVarName().equals(name)) {
-                return i + params.size();
+                return i + params.size() + 2;
             }
         }
         String msg =

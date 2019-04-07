@@ -1,16 +1,25 @@
 package chocopy.common.codegen;
 
-import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.HashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** RISC V assembly-language generation utilities. */
 public class RiscVBackend {
 
-    /** Assembly code output file. */
-    protected final PrintWriter out;
+    /** Accumulator for assembly code output. */
+    protected final StringWriter asmText = new StringWriter();
+
+    /** Allows print, println, and printf of assmebly code. */
+    private final PrintWriter out = new PrintWriter(asmText);
 
     /** The word size in bytes for RISC-V 32-bit. */
     protected static final int WORD_SIZE = 4;
+
+    /** Mappung from @-symbols to values. */
+    private HashMap<String, String> defns = new HashMap<>();
 
     /** The RISC-V registers. */
     public enum Register {
@@ -37,14 +46,69 @@ public class RiscVBackend {
 
     }
 
-    /**
-     * Creates a new backend with a given outputstream
-     * where the generated code will be emitted.
-     *
-     * @param out the output stream
+    /** Matches a reference to an assembler symbol, and possibly a trailing
+     *  +CONST or -CONST. */
+    static final Pattern ASM_SYM_REF_PATN =
+        Pattern.compile("@(.[a-zA-Z_0-9.$]*)(?:\\s*([-+]\\d+))?");
+    /** Matches a decimal numeral with optional sign. */
+    static final Pattern SIGNED_INT_PATN = Pattern.compile("[-+]?\\d+");
+
+    /** Return the accumulated assembly code.  It is an error if the
+     *  accumulated code contains any '@' references to undefined symbols. */
+    @Override
+    public String toString() {
+        StringBuffer result = new StringBuffer();
+        Matcher refs = ASM_SYM_REF_PATN.matcher(asmText.toString());
+        while (refs.find()) {
+            String repl = defns.get(refs.group(1));
+            if (repl == null) {
+                throw new IllegalStateException("undefined symbol: @"
+                                                + refs.group(1));
+            }
+            if (refs.group(2) != null) {
+                if (SIGNED_INT_PATN.matcher(repl).matches()) {
+                    int val = Integer.parseInt(repl) 
+                        + Integer.parseInt(refs.group(2));
+                    refs.appendReplacement(result, Integer.toString(val));
+                } else {
+                    refs.appendReplacement(result, repl + refs.group(2));
+                }
+            } else {
+                refs.appendReplacement(result, repl);
+            }
+        }
+        refs.appendTail(result);
+
+        return result.toString();
+    }
+
+    /** Define @NAME to have the value VALUE.  Here, NAME is assumed to be
+     *  an identifier consisting of letters, digits, underscores, and any of
+     *  the charcters '$' or '.', and that does not start with a digit.
+     *  Any occurrences of @NAME in the emitted assembly code are first
+     *  replaced by VALUE before being returned by toString(). It is an
+     *  error to define a name twice. NAME may begin with "@"; 
+     *  defineSym("@X", V) has the same effect as defineSym("X", V). */
+    public void defineSym(String name, String value) {
+        if (name.startsWith("@")) {
+            name = name.substring(1);
+        }
+
+        if (!name.matches("[A-Za-z_.$][A-Za-z_0-9.$]*")) {
+            throw new IllegalArgumentException("bad symbol: " + name);
+        }
+        if (defns.containsKey(name)) {
+            throw new IllegalArgumentException("multiple definitions of @"
+                                               + name);
+        }
+        defns.put(name, value);
+    }
+
+    /** Define @NAME to have the value VALUE, where value is converted to
+     *  a string.  See {@link #defineSym(java.lang.String, java.lang.String)}.
      */
-    public RiscVBackend(OutputStream out) {
-        this.out = new PrintWriter(out, true);
+    public void defineSym(String name, int value) {
+        defineSym(name, Integer.toString(value));
     }
 
     /**
@@ -247,6 +311,18 @@ public class RiscVBackend {
     }
 
     /**
+     * Emit an add-immediate instruction performing RD = RS + IMM.
+     * Here, IMM is a string generally containing a symbolic assembler
+     * constant (see defineSym) representing an integer value, or an
+     * expression of the form @NAME+NUM or @NAME-NUM.
+     * COMMENT is an optional one-line comment (null if missing).
+     */
+    public void emitADDI(Register rd, Register rs, String imm,
+                         String comment) {
+        emitInsn(String.format("addi %s, %s, %s", rd, rs, imm), comment);
+    }
+
+    /**
      * Emit an add instruction performing RD = RS1 + RS2 mod 2**32.
      * COMMENT is an optional one-line comment (null if missing).
      */
@@ -363,6 +439,17 @@ public class RiscVBackend {
     }
 
     /**
+     * Emit a load-word instruction: RD = MEMORY[RS + IMM]:4, where
+     * -2048 <= IMM < 2048.  Here, IMM is symbolic constant expression
+     * (see emitADDI).  COMMENT is an optional one-line
+     * comment (null if missing).
+     */
+    public void emitLW(Register rd, Register rs, String imm,
+                       String comment) {
+        emitInsn(String.format("lw %s, %sz(%s)", rd, imm, rs), comment);
+    }
+
+    /**
      * Emit a store-word instruction: MEMORY[RS1 + IMM]:4 = RS2, where
      * -2048 <= IMM < 2048.
      * COMMENT is an optional one-line comment (null if missing).
@@ -370,6 +457,17 @@ public class RiscVBackend {
     public void emitSW(Register rs2, Register rs1, Integer imm,
                        String comment) {
         emitInsn(String.format("sw %s, %d(%s)", rs2, imm, rs1), comment);
+    }
+
+    /**
+     * Emit a store-word instruction: MEMORY[RS1 + IMM]:4 = RS2, where
+     * -2048 <= IMM < 2048.  Here, IMM is symbolic constant expression
+     * (see emitADDI).  COMMENT is an optional one-line
+     * comment (null if missing).
+     */
+    public void emitSW(Register rs2, Register rs1, String imm,
+                       String comment) {
+        emitInsn(String.format("sw %s, %s(%s)", rs2, imm, rs1), comment);
     }
 
     /**
@@ -439,6 +537,16 @@ public class RiscVBackend {
     }
 
     /**
+     * Emit a branch-if-greater-or-equal (signed) instruction:
+     * if RS1 >= RS2 goto LABEL.
+     * COMMENT is an optional one-line comment (null if missing).
+     */
+    public void emitBGE(Register rs1, Register rs2, Label label,
+                         String comment) {
+        emitInsn(String.format("bge %s, %s, %s", rs1, rs2, label), comment);
+    }
+
+    /**
      * Emit a branch-if-greater-or-equal (unsigned) instruction:
      * if RS1 >= RS2 goto LABEL.
      * COMMENT is an optional one-line comment (null if missing).
@@ -446,6 +554,26 @@ public class RiscVBackend {
     public void emitBGEU(Register rs1, Register rs2, Label label,
                          String comment) {
         emitInsn(String.format("bgeu %s, %s, %s", rs1, rs2, label), comment);
+    }
+
+    /**
+     * Emit a branch-if-greater-or-equal (signed) instruction:
+     * if RS1 >= RS2 goto LABEL.
+     * COMMENT is an optional one-line comment (null if missing).
+     */
+    public void emitBLT(Register rs1, Register rs2, Label label,
+                         String comment) {
+        emitInsn(String.format("blt %s, %s, %s", rs1, rs2, label), comment);
+    }
+
+    /**
+     * Emit a branch-if-greater-or-equal (unsigned) instruction:
+     * if RS1 >= RS2 goto LABEL.
+     * COMMENT is an optional one-line comment (null if missing).
+     */
+    public void emitBLTU(Register rs1, Register rs2, Label label,
+                         String comment) {
+        emitInsn(String.format("bltu %s, %s, %s", rs1, rs2, label), comment);
     }
 
     /**

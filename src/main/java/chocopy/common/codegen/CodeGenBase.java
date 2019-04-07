@@ -21,6 +21,7 @@ import chocopy.common.astnodes.Program;
 import chocopy.common.astnodes.Stmt;
 import chocopy.common.astnodes.TypedVar;
 import chocopy.common.astnodes.VarDef;
+import chocopy.common.analysis.AbstractNodeAnalyzer;
 
 import static chocopy.common.Utils.*;
 import static chocopy.common.codegen.RiscVBackend.Register.*;
@@ -51,7 +52,7 @@ import static chocopy.common.codegen.RiscVBackend.Register.*;
  */
 public abstract class CodeGenBase {
 
-    /** The location of the text resources containing library code. */
+    /** The location of the text resources containing common library code. */
     protected static final String LIBRARY_CODE_DIR
         = "chocopy/common/codegen/asm/";
 
@@ -66,11 +67,11 @@ public abstract class CodeGenBase {
 
     /** Predefined classes. The list "class" is a fake class; we use it only
      *  to emit a prototype object for empty lists. */
-    protected final ClassInfo
+    protected ClassInfo
         objectClass, intClass, boolClass, strClass, listClass;
 
     /** Predefined functions. */
-    protected final FuncInfo printFunc, lenFunc, inputFunc;
+    protected FuncInfo printFunc, lenFunc, inputFunc;
 
     /**
      * A list of global variables, whose initial values are
@@ -143,56 +144,9 @@ public abstract class CodeGenBase {
     public CodeGenBase(RiscVBackend backend) {
         this.backend = backend;
 
-        FuncInfo objectInit =
-            makeFuncInfo("object.__init__", 0, SymbolType.NONE_TYPE,
-                         globalSymbols, null, this::emitStdFunc);
-        objectInit.addParam(makeStackVarInfo("self", null, null, objectInit));
-        functions.add(objectInit);
-
-        objectClass = makeClassInfo("object", getNextTypeTag(), null);
-        objectClass.addMethod(objectInit);
-        classes.add(objectClass);
-        globalSymbols.put(objectClass.getClassName(), objectClass);
-
-        intClass = makeClassInfo("int", getNextTypeTag(), objectClass);
-        intClass.addAttribute(makeAttrInfo("__int__", null, null));  // FIXME?
-        classes.add(intClass);
-        globalSymbols.put(intClass.getClassName(), intClass);
-
-        boolClass = makeClassInfo("bool", getNextTypeTag(), objectClass);
-        boolClass.addAttribute(makeAttrInfo("__bool__", null, null)); // FIXME?
-        classes.add(boolClass);
-        globalSymbols.put(boolClass.getClassName(), boolClass);
-
-        strClass = makeClassInfo("str", getNextTypeTag(), objectClass);
-        strClass.addAttribute(makeAttrInfo("__len__", SymbolType.INT_TYPE,
-                                           new IntegerLiteral(null, null, 0)));
-        strClass.addAttribute(makeAttrInfo("__str__", null, null));
-        classes.add(strClass);
-        globalSymbols.put(strClass.getClassName(), strClass);
-
-        listClass = makeClassInfo(".list", -1, objectClass);
-        listClass.addAttribute(makeAttrInfo("__len__", SymbolType.INT_TYPE,
-                                            new IntegerLiteral(null, null, 0)));
-        classes.add(listClass);
-        listClass.dispatchTableLabel = null;
-
-        printFunc = makeFuncInfo("print", 0, SymbolType.NONE_TYPE,
-                                 globalSymbols, null, this::emitStdFunc);
-        printFunc.addParam(makeStackVarInfo("arg", null, null, printFunc));
-        functions.add(printFunc);
-        globalSymbols.put(printFunc.getBaseName(), printFunc);
-
-        lenFunc = makeFuncInfo("len", 0, SymbolType.INT_TYPE,
-                globalSymbols, null, this::emitStdFunc);
-        lenFunc.addParam(makeStackVarInfo("arg", null, null, lenFunc));
-        functions.add(lenFunc);
-        globalSymbols.put(lenFunc.getBaseName(), lenFunc);
-
-        inputFunc = makeFuncInfo("input", 0, SymbolType.STR_TYPE,
-                                 globalSymbols, null, this::emitStdFunc);
-        functions.add(inputFunc);
-        globalSymbols.put(inputFunc.getBaseName(), inputFunc);
+        initClasses();
+        initFunctions();
+        initAsmConstants();
     }
 
     /** Return a fresh type tag. */
@@ -243,7 +197,7 @@ public abstract class CodeGenBase {
 
         for (GlobalVarInfo global : this.globalVars) {
             backend.emitGlobalLabel(global.getLabel());
-            emitConstant(global.getInitialValue(), global.getVarType(), 
+            emitConstant(global.getInitialValue(), global.getVarType(),
                          String.format("Initial value of global var: %s",
                                        global.getVarName()));
         }
@@ -260,13 +214,10 @@ public abstract class CodeGenBase {
         backend.emitMV(S10, GP, "Set beginning of heap");
         backend.emitADD(S11, S10, S11,
                         "Set end of heap (= start of heap + heap size)");
-        backend.emitADDI(FP, SP, 1 * backend.getWordSize(),
-                         "New fp is just below stack top");
+        backend.emitMV(RA, ZERO, "No normal return from main program.");
+        backend.emitMV(FP, ZERO, "No preceding frame.");
 
         emitTopLevel(program.statements);
-
-        backend.emitLI(A0, EXIT_ECALL, "Code for ecall: exit");
-        backend.emitEcall(null);
 
         for (FuncInfo funcInfo : this.functions) {
             funcInfo.emitBody();
@@ -283,6 +234,109 @@ public abstract class CodeGenBase {
         emitConstants();
     }
 
+    /** Create descriptors and symbols for builtin classes and methods. */
+    protected void initClasses() {
+        FuncInfo objectInit =
+            makeFuncInfo("object.__init__", 0, SymbolType.NONE_TYPE,
+                         globalSymbols, null, this::emitStdFunc);
+        objectInit.addParam(makeStackVarInfo("self", null, null, objectInit));
+        functions.add(objectInit);
+
+        objectClass = makeClassInfo("object", getNextTypeTag(), null);
+        objectClass.addMethod(objectInit);
+        classes.add(objectClass);
+        globalSymbols.put(objectClass.getClassName(), objectClass);
+
+        intClass = makeClassInfo("int", getNextTypeTag(), objectClass);
+        intClass.addAttribute(makeAttrInfo("__int__", null, null));
+        classes.add(intClass);
+        globalSymbols.put(intClass.getClassName(), intClass);
+
+        boolClass = makeClassInfo("bool", getNextTypeTag(), objectClass);
+        boolClass.addAttribute(makeAttrInfo("__bool__", null, null));
+        classes.add(boolClass);
+        globalSymbols.put(boolClass.getClassName(), boolClass);
+
+        strClass = makeClassInfo("str", getNextTypeTag(), objectClass);
+        strClass.addAttribute(makeAttrInfo("__len__", SymbolType.INT_TYPE,
+                                           new IntegerLiteral(null, null, 0)));
+        strClass.addAttribute(makeAttrInfo("__str__", null, null));
+        classes.add(strClass);
+        globalSymbols.put(strClass.getClassName(), strClass);
+
+        listClass = makeClassInfo(".list", -1, objectClass);
+        listClass.addAttribute(makeAttrInfo("__len__", SymbolType.INT_TYPE,
+                                            new IntegerLiteral(null, null, 0)));
+        classes.add(listClass);
+        listClass.dispatchTableLabel = null;
+    }
+
+    /** Create descriptors and symbols for builtin functions. */
+    protected void initFunctions() {
+        printFunc = makeFuncInfo("print", 0, SymbolType.NONE_TYPE,
+                                 globalSymbols, null, this::emitStdFunc);
+        printFunc.addParam(makeStackVarInfo("arg", null, null, printFunc));
+        functions.add(printFunc);
+        globalSymbols.put(printFunc.getBaseName(), printFunc);
+
+        lenFunc = makeFuncInfo("len", 0, SymbolType.INT_TYPE,
+                globalSymbols, null, this::emitStdFunc);
+        lenFunc.addParam(makeStackVarInfo("arg", null, null, lenFunc));
+        functions.add(lenFunc);
+        globalSymbols.put(lenFunc.getBaseName(), lenFunc);
+
+        inputFunc = makeFuncInfo("input", 0, SymbolType.STR_TYPE,
+                                 globalSymbols, null, this::emitStdFunc);
+        functions.add(inputFunc);
+        globalSymbols.put(inputFunc.getBaseName(), inputFunc);
+    }
+
+    /* Symbolic assembler constants defined here (to add others, override
+     * initAsmConstants in an extension of CodeGenBase):
+     * ecalls:
+     *   @print_string
+     *   @print_char
+     *   @print_int
+     *   @exit2
+     * Exit codes:
+     *   @error_div_zero: Division by 0.
+     *   @error_arg: Bad argument.
+     *   @error_oob: Out of bounds.
+     *   @error_none: Attempt to access attribute of None.
+     *   @error_oom: Out of memory.
+     *   @error_nyi: Unimplemented operation.
+     * Data-structure byte offsets:
+     *   @.__obj_size__: Offset of size of object.
+     *   @.__len__: Offset of length in chars or words.
+     *   @.__str__: Offset of string data.
+     *   @.__elts__: Offset of first list item.
+     *   @.__int__: Offset of integer value.
+     *   @.__bool__: Offset of boolean (1/0) value.
+     */
+
+    /** Define @-constants to be used in assembly code. */
+    protected void initAsmConstants() {
+        backend.defineSym("sbrk", SBRK_ECALL);
+        backend.defineSym("print_string", PRINT_STRING_ECALL);
+        backend.defineSym("print_char", PRINT_CHAR_ECALL);
+        backend.defineSym("print_int", PRINT_INT_ECALL);
+        backend.defineSym("exit2", EXIT2_ECALL);
+
+        backend.defineSym(".__obj_size__", 4);
+        backend.defineSym(".__len__", 12);
+        backend.defineSym(".__int__", 12);
+        backend.defineSym(".__bool__", 12);
+        backend.defineSym(".__str__", 16);
+        backend.defineSym(".__elts__", 16);
+
+        backend.defineSym("error_div_zero", ERROR_DIV_ZERO);
+        backend.defineSym("error_arg", ERROR_ARG);
+        backend.defineSym("error_oob", ERROR_OOB);
+        backend.defineSym("error_none", ERROR_NONE);
+        backend.defineSym("error_oom", ERROR_OOM);
+        backend.defineSym("error_nyi", ERROR_NYI);
+    }
+
     /*-----------------------------------------------------------*/
     /*                                                           */
     /*          FACTORY METHODS TO CREATE INFO OBJECTS           */
@@ -290,10 +344,11 @@ public abstract class CodeGenBase {
     /*-----------------------------------------------------------*/
 
     /**
-     * Return a descriptor for function or method FUNCNAME at nesting level
-     * DEPTH in the region corresponding to PARENTSYMBOLTABLE.
+     * A factory method that returns a descriptor for function or method
+     * FUNCNAME returning type RETURNTYPE at nesting level DEPTH in the
+     * region corresponding to PARENTSYMBOLTABLE.
 
-     * PARENTFUNCINFO is a descriptor of the enclosing function and is `null`
+     * PARENTFUNCINFO is a descriptor of the enclosing function and is null
      * for global functions and methods.
 
      * EMITTER is a method that emits the function's body (usually a
@@ -327,23 +382,24 @@ public abstract class CodeGenBase {
     }
 
     /**
-     * Return a descriptor for an attribute named ATTRNAME and an initial
-     * value located at INITIALVALUE, which must be either `null`
-     * or a {@link Label} referencing a constant).
+     * A factory method that returns a descriptor for an attribute named
+     * ATTRNAME of type ATTRTYPE and with an initial value specified
+     * by INITIALVALUE, which may be null to indicate a default initialization.
      *
      * Sub-classes of CodeGenBase can override this method
      * if they wish to use a sub-class of AttrInfo with more
      * functionality.
      */
-    public AttrInfo makeAttrInfo(String attrName, ValueType attrType, Literal initialValue) {
+    public AttrInfo makeAttrInfo(String attrName, ValueType attrType,
+                                 Literal initialValue) {
         return new AttrInfo(attrName, attrType, initialValue);
     }
 
     /**
-     * Return descriptor for a local variable or parameter named VARNAME, whose
-     * initial value comes from the constant at location INITIALVALUE (if
-     * non-null), and which is defined immediately within the function given
-     * by FUNCINFO.
+     * A factory method that returns a descriptor for a local variable or
+     * parameter named VARNAME of type VARTYPE, whose initial value is
+     * specified by INITIALVALUE (if non-null) and which is defined
+     * immediately within the function given by FUNCINFO.
      *
      * These variables are allocated on the stack in activation
      * frames.
@@ -354,14 +410,15 @@ public abstract class CodeGenBase {
      *
      */
     public StackVarInfo makeStackVarInfo(String varName, ValueType varType,
-                                         Literal initialValue, FuncInfo funcInfo) {
+                                         Literal initialValue,
+                                         FuncInfo funcInfo) {
         return new StackVarInfo(varName, varType, initialValue, funcInfo);
     }
 
     /**
-     * Return descriptor for a global variable with name VARNAME and whose
-     * initial value comes from the constant at location INITIALVALUE (if
-     * non-null).
+     * A factory method that returns a descriptor for a global variable with
+     * name VARNAME and type VARTYPE, whose initial value is specified by
+     * INITIALVALUE (if non-null).
      *
      * Sub-classes of CodeGenBase can override this method
      * if they wish to use a sub-class of GlobalVarInfo with more
@@ -487,8 +544,8 @@ public abstract class CodeGenBase {
     protected FuncInfo
         analyzeFunction(String container, FuncDef funcDef,
                         int depth,
-                        SymbolTable<SymbolInfo>
-                        parentSymbolTable, FuncInfo parentFuncInfo) {
+                        SymbolTable<SymbolInfo> parentSymbolTable,
+                        FuncInfo parentFuncInfo) {
         /* We proceed in three steps.
          *  1. Create the FuncInfo object to be returned.
          *  2. Populate it by analyzing all the parameters and local var
@@ -521,49 +578,89 @@ public abstract class CodeGenBase {
             funcInfo.addParam(paramInfo);
         }
 
-        for (Declaration decl : funcDef.declarations) {
-            if (decl instanceof VarDef) {
-                VarDef localVarDef = (VarDef) decl;
-                ValueType localVarType
-                    = ValueType.annotationToValueType(localVarDef.var.type);
-                StackVarInfo localVar =
-                    makeStackVarInfo(localVarDef.var.identifier.name,
-                                     localVarType, localVarDef.value,
-                                     funcInfo);
+        LocalDeclAnalyzer localDefs = new LocalDeclAnalyzer(funcInfo);
 
-                funcInfo.addLocal(localVar);
-            } else if (decl instanceof GlobalDecl) {
-                SymbolInfo symInfo =
-                    globalSymbols.get(decl.getIdentifier().name);
-                assert symInfo instanceof GlobalVarInfo
-                    : "Semantic analysis should ensure that global var exists";
-                GlobalVarInfo globalVar = (GlobalVarInfo) symInfo;
-                funcInfo.getSymbolTable().put(globalVar.getVarName(),
-                                              globalVar);
-            } else if (decl instanceof NonLocalDecl) {
-                assert funcInfo.getSymbolTable().get(decl.getIdentifier().name)
-                    instanceof StackVarInfo
-                    : "Semantic analysis should ensure nonlocal var exists";
-            }
+        for (Declaration decl : funcDef.declarations) {
+            decl.dispatch(localDefs);
         }
 
+        NestedFuncAnalyzer nestedFuncs = new NestedFuncAnalyzer(funcInfo);
+
         for (Declaration decl : funcDef.declarations) {
-            if (decl instanceof FuncDef) {
-                FuncDef nestedFuncDef = (FuncDef) decl;
-                FuncInfo nestedFuncInfo =
-                    analyzeFunction(funcQualifiedName, nestedFuncDef,
-                                    depth + 1, funcInfo.getSymbolTable(),
-                                    funcInfo);
-
-                this.functions.add(nestedFuncInfo);
-
-                funcInfo.getSymbolTable().put(nestedFuncInfo.getBaseName(),
-                                              nestedFuncInfo);
-            }
+            decl.dispatch(nestedFuncs);
         }
 
         funcInfo.addBody(funcDef.statements);
         return funcInfo;
+    }
+
+    /** Analyzer for local variable declarations in a function. */
+    protected class LocalDeclAnalyzer extends AbstractNodeAnalyzer<Void> {
+        /** The descriptor for the function being analyzed. */
+        private FuncInfo funcInfo;
+
+        /** A new analyzer for a function with descriptor FUNCINFO0. */
+        protected LocalDeclAnalyzer(FuncInfo funcInfo0) {
+            funcInfo = funcInfo0;
+        }
+
+        @Override
+        public Void analyze(VarDef localVarDef) {
+            ValueType localVarType
+                = ValueType.annotationToValueType(localVarDef.var.type);
+            StackVarInfo localVar =
+                makeStackVarInfo(localVarDef.var.identifier.name,
+                                 localVarType, localVarDef.value,
+                                 funcInfo);
+            funcInfo.addLocal(localVar);
+            return null;
+        }
+
+        @Override
+        public Void analyze(GlobalDecl decl) {
+            SymbolInfo symInfo =
+                globalSymbols.get(decl.getIdentifier().name);
+            assert symInfo instanceof GlobalVarInfo
+                : "Semantic analysis should ensure that global var exists";
+            GlobalVarInfo globalVar = (GlobalVarInfo) symInfo;
+            funcInfo.getSymbolTable().put(globalVar.getVarName(),
+                                          globalVar);
+            return null;
+        }
+
+        @Override
+        public Void analyze(NonLocalDecl decl) {
+            assert funcInfo.getSymbolTable().get(decl.getIdentifier().name)
+                instanceof StackVarInfo
+                : "Semantic analysis should ensure nonlocal var exists";
+            return null;
+        }
+    }
+
+    /** Analyzer for nested function declarations in a function. */
+    protected class NestedFuncAnalyzer extends AbstractNodeAnalyzer<Void> {
+        /** Descriptor for the function being analyzed. */
+        private FuncInfo funcInfo;
+
+        /** A new analyzer for a function with descriptor FUNCINFO0. */
+        protected NestedFuncAnalyzer(FuncInfo funcInfo0) {
+            funcInfo = funcInfo0;
+        }
+
+        @Override
+        public Void analyze(FuncDef nestedFuncDef) {
+            FuncInfo nestedFuncInfo =
+                analyzeFunction(funcInfo.getFuncName(), nestedFuncDef,
+                                funcInfo.getDepth() + 1,
+                                funcInfo.getSymbolTable(),
+                                funcInfo);
+
+            functions.add(nestedFuncInfo);
+
+            funcInfo.getSymbolTable().put(nestedFuncInfo.getBaseName(),
+                                          nestedFuncInfo);
+            return null;
+        }
     }
 
 
@@ -602,9 +699,10 @@ public abstract class CodeGenBase {
         alignObject();
     }
 
-    /** Emit a word containing a constant representing VALUE, assuming that it will be
-     *  interpreted as a value of static type TYPE. VALUE may be null, indicating None.
-     *  TYPE may be null, indicating object. COMMENT is an optional comment.  */
+    /** Emit a word containing a constant representing VALUE, assuming that
+     *  it will be interpreted as a value of static type TYPE. VALUE may be
+     *  null, indicating None. TYPE may be null, indicating object.
+     *  COMMENT is an optional comment.  */
     protected void emitConstant(Literal value, ValueType type, String comment) {
         if (type != null && type.equals(SymbolType.INT_TYPE)) {
             backend.emitWordLiteral(((IntegerLiteral) value).value, comment);
@@ -757,17 +855,18 @@ public abstract class CodeGenBase {
      *                                                            *
      *------------------------------------------------------------*/
 
-    /** Return Risc V assembler code for built-in function NAME, or null
-     *  if it does not exist. */
-    protected String getStandardLibraryCode(String name) {
+    /** Return Risc V assembler code for function NAME from
+     *  directory LIB, or null if it does not exist. LIB must end in
+     *  '/'. */
+    protected String getStandardLibraryCode(String name, String lib) {
         String simpleName = name.replace("$", "") + ".s";
-        return getResourceFileAsString(LIBRARY_CODE_DIR + simpleName);
+        return getResourceFileAsString(lib + simpleName);
     }
 
     /** Emit label and body for the function LABEL, taking the
-     *  source from from the assembler-code library. */
-    protected void emitStdFunc(Label label) {
-        String source = getStandardLibraryCode(label.toString());
+     *  source from from directory LIB (must end in '/'). */
+    protected void emitStdFunc(Label label, String lib) {
+        String source = getStandardLibraryCode(label.toString(), lib);
         if (source == null) {
             throw fatal("Code for %s is missing.", label.toString());
         }
@@ -775,20 +874,38 @@ public abstract class CodeGenBase {
         backend.emit(convertLiterals(source));
     }
 
+    /** Emit label and body for the function LABEL, taking the
+     *  source from from the default library directory. */
+    protected void emitStdFunc(Label label) {
+        emitStdFunc(label, LIBRARY_CODE_DIR);
+    }
+
     /** Emit label and body for the function named NAME, taking the
-     *  source from from the assembler-code library. */
+     *  source from from directory LIB (must end in '/'). */
+    protected void emitStdFunc(String name, String lib) {
+        emitStdFunc(new Label(name), lib);
+    }
+
+    /** Emit label and body for the function NAME, taking the
+     *  source from from the default library directory. */
     protected void emitStdFunc(String name) {
-        emitStdFunc(new Label(name));
+        emitStdFunc(name, LIBRARY_CODE_DIR);
     }
 
     /** Emit label and body for the function described by FUNCINFO, taking the
-     *  source from from the assembler-code library. */
+     *  source from from directory LIB (must end in '/'). */
+    protected void emitStdFunc(FuncInfo funcInfo, String lib) {
+        emitStdFunc(funcInfo.getCodeLabel(), lib);
+    }
+
+    /** Emit label and body for the function described by FUNCINFO, taking the
+     *  source from from the default library directory. */
     protected void emitStdFunc(FuncInfo funcInfo) {
-        emitStdFunc(funcInfo.getCodeLabel());
+        emitStdFunc(funcInfo, LIBRARY_CODE_DIR);
     }
 
     /** Pattern matching STRING["..."]. */
-    private final static Pattern STRING_LITERAL_PATN =
+    private static final Pattern STRING_LITERAL_PATN =
         Pattern.compile("STRING\\[\"(.*?)\"\\]");
 
     /** Return result of converting STRING["..."] notations in SOURCE to

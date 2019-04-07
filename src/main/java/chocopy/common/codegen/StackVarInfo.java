@@ -10,9 +10,10 @@ public class StackVarInfo extends VarInfo {
     protected final FuncInfo funcInfo;
 
     /**
-     * A descriptor for a local variable or parameter VARNAME, whose initial
-     * value is stored at INITIALVALUE (null if no initial value), and which
-     * is nested immediately within the function described by FUNCINFO.
+     * A descriptor for a local variable or parameter VARNAME of type VARTYPE,
+     * whose initial value is given by INITIALVALUE (null if no initial value),
+     * and which is nested immediately within the function described
+     * by FUNCINFO.
      */
     public StackVarInfo(String varName, ValueType varType, Literal initialValue,
                         FuncInfo funcInfo) {

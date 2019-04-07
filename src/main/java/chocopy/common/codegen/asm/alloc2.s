@@ -5,7 +5,7 @@
   mul a2, a1, a2                           # Calculate number of bytes to allocate
   add a2, gp, a2                           # Estimate where GP will move
   bgeu a2, s11, alloc2_15                  # Go to OOM handler if too large
-  lw t0, 4(a0)                             # Get size of object in words
+  lw t0, @.__obj_size__(a0)                # Get size of object in words
   mv t2, a0                                # Initialize src ptr
   mv t3, gp                                # Initialize dest ptr
 alloc2_16:                                 # Copy-loop header
@@ -16,12 +16,13 @@ alloc2_16:                                 # Copy-loop header
   addi t0, t0, -1                          # Decrement counter
   bne t0, zero, alloc2_16                  # Loop if more words left to copy
   mv a0, gp                                # Save new object's address to return
-  sw a1, 4(a0)                             # Set size of new object in words (same as requested size)
+  sw a1, @.__obj_size__(a0)                # Set size of new object in words
+                                           # (same as requested size)
   mv gp, a2                                # Set next free slot in the heap
   jr ra                                    # Return to caller
 alloc2_15:                                 # OOM handler
-  li a0, 5                                 # Exit code for: Out of memory
+  li a0, @error_oom                        # Exit code for: Out of memory
   la a1, STRING["Out of memory"]           # Load error message as str
-  addi a1, a1, 16                          # Load address of attribute __str__
+  addi a1, a1, @.__str__                   # Load address of attribute __str__
   j abort                                  # Abort
         
