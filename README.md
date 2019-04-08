@@ -58,7 +58,7 @@ for the specification of the ChocoPy language.
 Add the `upstream` repository remotes (you only need to do this once in your local clone):
 
 
-    git remote add upstream https://github.com/cs164fall2018/pa2-chocopy-semantic-analysis.git
+    git remote add upstream https://github.com/cs164fall2019/pa2-chocopy-semantic-analysis.git
 
 
 To sync with updates upstream:
